@@ -24,7 +24,7 @@ Miniconda: dl link - https://docs.conda.io/projects/miniconda/en/latest/
     - 'teamshare' is the root of the teamshare path, change it to how teamshare is mounted on your system
 
 2. setup required python environment 
-    - First create a new conda environment, make sure conda is installed then, run ```conda create -n social_interaction python=3.9```
+    - First create a new conda environment, make sure conda is installed then, run ```conda create -n social_interaction python=3.10.12```
     - activate env with ```conda activate social_interaction``` then run ```conda install pip```
     - run ```pip install -r requirements.txt``` while in the project directory to install all required pacakges
 
