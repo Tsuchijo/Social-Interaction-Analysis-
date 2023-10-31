@@ -3,17 +3,14 @@
 # Import libraries
 import os 
 import sys
-sys.path.append(os.path.abspath('../'))
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import datetime
 import re
-import math
-import argparse
-import pickle
 import cv2
 import tdt
+sys.path.append(os.path.abspath('../'))
 import config
 
 ## Outline of Processing pipeline
@@ -159,16 +156,64 @@ def load_photometry_streams(path, sample_rate=None, trial_duration=30, skip_tria
     # Split the data into trials based on the rising edges and the trial duration
     # Skips the Last trial because it is usually cut off
     try:
-        trials_405A = np.array([ trial[:int(trial_duration*sample_rate)] for trial in np.split(stream_405A, start_indices)[skip_trials:-1]])
-        trials_405C = np.array([ trial[:int(trial_duration*sample_rate)] for trial in np.split(stream_405C, start_indices)[skip_trials:-1]])
-        trials_465A = np.array([ trial[:int(trial_duration*sample_rate)] for trial in np.split(stream_465A, start_indices)[skip_trials:-1]])
-        trials_465C = np.array([ trial[:int(trial_duration*sample_rate)] for trial in np.split(stream_465C, start_indices)[skip_trials:-1]])
+        trials_405A = ([ trial[:int(trial_duration*sample_rate)] for trial in np.split(stream_405A, start_indices)[skip_trials:-1]])
+        trials_405C = ([ trial[:int(trial_duration*sample_rate)] for trial in np.split(stream_405C, start_indices)[skip_trials:-1]])
+        trials_465A = ([ trial[:int(trial_duration*sample_rate)] for trial in np.split(stream_465A, start_indices)[skip_trials:-1]])
+        trials_465C = ([ trial[:int(trial_duration*sample_rate)] for trial in np.split(stream_465C, start_indices)[skip_trials:-1]])
         return trials_405A, trials_405C, trials_465A, trials_465C
 
     except IndexError:
         print("Error: Photometry data at path: " + path + " is shorter than the given trial duration, either trial duration is too long or the threshold is incorrect")
         return None, None, None, None
     
+## Takes a CSV, Video, and photometry path, and writes the photometry data to a CSV file with each trial labelled, as well as video timestamps for each entry
+## It first loads the photometry data then aligns the first trial to the first cue in the data, then loads the video data and finds the offset to the first cue and the frane rate
+## Then it creates a CSV with a column for each photometry trace, as well as a column for the video timestamps and a collumn labelling each trial
+# @param: CSV_path - string containing the path to the CSV file
+# @param: Video_path - string containing the path to the video file
+# @param: Photometry_path - string containing the path to the photometry file
+# @param: output_path - string containing the path to the folder to save the CSV file to
+# @param: F1_name - string containing the name of the first mouse
+# @param: F2_name - string containing the name of the second mouse
+# @param: trial_duration - int containing the length of the trial in seconds, by default 30, this should be how long the light was turned on for in the trial
+# @param: skip_trials - int containing the number of trials to skip at the beginning of the data, by default 1, this is to skip the first trial which is usually before the experiment starts
+# @param: sample_rate - float containing the sample rate of the photometry data, by default 1017 (fs of the TDT system)
+# @param: cue_offset_seconds - the signed offset between the cue and the trigger sent to the photmetry data in seconds, e.g. if the trigger was 5 seconds before the cue it would be -5
+# @return - df - pandas dataframe containing the photometry data, with each trial labelled, as well as video timestamps for each entry
+def write_photometry_to_csv(CSV_path, Video_path, Photometry_path, output_path, F1_name, F2_name, trial_duration=30, skip_trials=1, sample_rate=None, cue_offset_seconds=0):
+    trials_405A, trials_405C, trials_465A, trials_465C = load_photometry_streams(Photometry_path, sample_rate=sample_rate, trial_duration=trial_duration, skip_trials=skip_trials)
+    if sample_rate is None:
+        sample_rate = 1017
+    experiment_csv = pd.read_csv(CSV_path)
+    video = cv2.VideoCapture(Video_path)
+    video_fps = video.get(cv2.CAP_PROP_FPS)
+    video_start_time = parse_date(Video_path.split('/')[-1].split('_')[0])
+    first_cue_onset = parse_date(experiment_csv['cue_time in s'][0])
+    cue_delta_time_seconds = experiment_csv['cue_time in s'].apply(lambda x: (parse_date(x) - first_cue_onset).total_seconds())
+    video_offset_seconds = (first_cue_onset - video_start_time).total_seconds() + cue_offset_seconds
+    video_offset_frames = int(video_offset_seconds * video_fps)
+    trial_length = int(trial_duration * sample_rate)
+    data = []
+    for i in range(len(cue_delta_time_seconds)):
+        try:
+            trial_405A = trials_405A[i]
+            trial_405C = trials_405C[i]
+            trial_465A = trials_465A[i]
+            trial_465C = trials_465C[i]
+            video_frames = np.linspace(video_offset_frames + int(cue_delta_time_seconds[i] * video_fps), video_offset_frames + int(cue_delta_time_seconds[i] * video_fps) + trial_length, trial_length)
+            # round to nearest frame
+            video_frames = np.round(video_frames)
+            for j in range(trial_length):
+                if i == 0 and j == 0:
+                    data.append({'Trial': i, '405A': trial_405A[j], '405C': trial_405C[j], '465A': trial_465A[j], '465C': trial_465C[j], 'Video Frame': video_frames[j], 'Sample Rate': sample_rate, 'Video FPS': video_fps, "Video Path": Video_path, 'Photometry Path': Photometry_path, 'CSV Path': CSV_path, 'F1 Name' : F1_name, 'F2 Name': F2_name})
+                else:
+                    data.append({'Trial': i, '405A': trial_405A[j], '405C': trial_405C[j], '465A': trial_465A[j], '465C': trial_465C[j], 'Video Frame': video_frames[j], 'Sample Rate': None, 'Video FPS': None, "Video Path": None, 'Photometry Path': None, 'CSV Path': None, 'F1 Name' : None, 'F2 Name': None})
+        except IndexError:
+            break
+    df = pd.DataFrame(data, columns=['Trial', '405A', '405C', '465A', '465C', 'Video Frame', 'Sample Rate', 'Video FPS', "Video Path", 'Photometry Path', 'CSV Path', 'F1 Name', 'F2 Name'])
+    df.to_csv(output_path, index=False)
+    return df
+        
 
 ## Find Matching CSV, Video, and Photometry Files
 # @param: CSV_path - path to the folder containing the CSV files
@@ -254,15 +299,73 @@ def match_datafiles_by_date(CSV_path, Video_path, Photometry_path, output_path=N
         df.to_csv(output, index=False)
     return df
 
+## Class to load and access photometry and video data from a csv file, unifying data access for both photometry and video data
+class PhotometryVideoData:
+    ## Constructor for the PhotometryVideoData class
+    # @param: photo_csv_path - string containing the path to the CSV file containing the photometry data
+    def __init__(self, photo_csv_path, trim_start=0) -> None:
+        self.df = pd.read_csv(photo_csv_path)
+        self.video = cv2.VideoCapture(self.df['Video Path'][0])
+        self.sample_rate = self.df['Sample Rate'][0]
+        self.video_fps = self.df['Video FPS'][0]
+        self.F1_name = self.df['F1 Name'][0]
+        self.F2_name = self.df['F2 Name'][0]
+        self.trim_start = trim_start
+
+    ## Get the photometry data for a given trial, getting all rows in the CSV file with the given trial number
+    # @param: trial - int containing the trial number
+    # @return: data - dict containing the photometry data for each channel
+    def get_photometry_data(self, trial):
+        data = dict()
+        for column in self.df.columns:
+            if re.match('405A|405C|465A|465C', column):
+                data[column] = self.df[self.df['Trial'] == trial][column].to_numpy()[self.trim_start:]
+        return data
+    
+    ## Get all trials in a given CSV file as dict of arrays, where each array is all trials stacked
+    # @return: data - dict containing the photometry data for each channel
+    def get_all_photometry_data(self):
+        for trial in self.df['Trial'].unique():
+            trial_data = self.get_photometry_data(trial)
+            if trial == 0:
+                data = dict.fromkeys(trial_data.keys(), None)
+            for key in trial_data.keys():
+                if data[key] is None:
+                    data[key] = trial_data[key]
+                else:
+                    data[key] = np.vstack((data[key], trial_data[key]))
+        return data
+
+    ## Set the start trim to exclude transients
+    # @param: trim_start - int containing the number of seconds to trim from the start
+    def set_trim_start(self, trim_start):
+        self.trim_start = trim_start
+    
+    ## Get the video data for a given trial, finding the range of frames in the video corresponding to the trial
+    ## then loading the frames from the video
+    # @param: trial - int containing the trial number
+    # @return: data - numpy array containing the video frames for the trial
+    def get_video_data(self, trial):
+        start_frame = self.df[self.df['Trial'] == trial]['Video Frame'].min()
+        end_frame = self.df[self.df['Trial'] == trial]['Video Frame'].max()
+        data = []
+        for i in range(int(start_frame), int(end_frame)):
+            self.video.set(cv2.CAP_PROP_POS_FRAMES, i)
+            ret, frame = self.video.read()
+            data.append(frame)
+        return np.array(data)[self.trim_start*self.video_fps // self.sample_rate:]
+
 
 if __name__ == '__main__':
     df =  match_datafiles_by_date(config.remote_trial_path, config.remote_video_path, config.remote_photometry_path, output_path='.')
-    ## Get the first photometry path for testing 
-    photo_path = df['Photometry'][1]
-    csv_path = df['CSV'][1]
-    ## Load the photometry data
-    trials_405A, trials_405C, trials_465A, trials_465C = load_photometry_streams(photo_path, sample_rate=24)
-    ## Plot the photometry data
-    print(trials_405A.shape)
-    plt.plot(trials_465A[:, :].T)
-    plt.show()
+    ## Iterate through all the rows in the dataframe and write the photometry data to a CSV file
+    for row in df.iterrows():
+        photo_path = row[1]['Photometry']
+        csv_path = row[1]['CSV']
+        video_path = row[1]['Video']
+        names = row[1]['F1 Name'] +  row[1]['F2 Name']
+        date = row[1]['Date'].strftime('%Y%m%d')
+        output_path = date + '_' + names + '.csv'
+        if photo_path is not None and csv_path is not None and video_path is not None:
+            write_photometry_to_csv(csv_path, video_path, photo_path, output_path, row[1]['F1 Name'], row[1]['F2 Name'], sample_rate=30, cue_offset_seconds=0)
+
