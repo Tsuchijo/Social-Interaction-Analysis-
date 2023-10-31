@@ -13,4 +13,4 @@ remote_video_path = teamshare + 'videos/'
 remote_photometry_path = teamshare + 'Littermate interaction/fiber photometry data/Mice with ID/'
 
 # Output paths
-teamshare + 'processed data/'
+remote_processed_data_path = teamshare + 'processed data/'
