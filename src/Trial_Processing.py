@@ -66,7 +66,6 @@ def get_names(CSV):
 # @param: files - list of strings containing the names of the files to match to the date
 # @param: max - int containing the maximum number of seconds between the date and the file
 # @return: closest_file - string containing the name of the file with the closest date to the given date
-
 def get_closest_file(date, files, max):
     closest_match = None
     for file in files:
@@ -130,7 +129,7 @@ def downsample(data, fs, target_fs):
 # @param: trial_duration - int containing the length of the trial in seconds, by default 30, this should be how long the light was turned on for in the trial
 # @param: skip_trials - int containing the number of trials to skip at the beginning of the data, by default 1, this is to skip the first trial which is usually before the experiment starts
 # @return: 405A, 405B, 465A, 465B - N x L numpy arrays containing the data from each channel, where N is the number of trials and L is the length of the trial
-def load_photometry_streams(path, sample_rate=None, trial_duration=30, skip_trials=1):
+def load_photometry_streams(path, sample_rate=None, trial_duration=30, skip_trials=1, threshold=10):
     # Load the TDT data from the path (this may take a while)
     data = tdt.read_block(path)
 
@@ -148,7 +147,7 @@ def load_photometry_streams(path, sample_rate=None, trial_duration=30, skip_tria
 
     # Sum the data together from each channel and then detect the rising edges of the data
     total_stream_405 = stream_405A + stream_405C + stream_465A + stream_465C
-    _ , start_indices, end_indices = detect_triggers(total_stream_405, threshold=20, window=int(sample_rate))
+    _ , start_indices, end_indices = detect_triggers(total_stream_405, threshold=threshold, window=int(sample_rate))
 
     print("Number of trials: " + str(len(start_indices)))
 
@@ -302,9 +301,15 @@ def match_datafiles_by_date(CSV_path, Video_path, Photometry_path, output_path=N
 class PhotometryVideoData:
     ## Constructor for the PhotometryVideoData class
     # @param: photo_csv_path - string containing the path to the CSV file containing the photometry data
-    def __init__(self, photo_csv_path, trim_start=0) -> None:
-        self.df = pd.read_csv(photo_csv_path)
+    # @param: df - pandas dataframe containing the CSV file, if not provided then the CSV file will be loaded from the photo_csv_path
+    def __init__(self, photo_csv_path=None, df=None, trim_start=0) -> None:
+        if photo_csv_path is not None and df is not None:
+            raise ValueError("Error: Cannot provide both a CSV path and a dataframe")
+        if photo_csv_path is None and df is None:
+            raise ValueError("Error: Must provide either a CSV path or a dataframe")
+        self.df = pd.read_csv(photo_csv_path) if df is None else df
         self.video = cv2.VideoCapture(self.df['Video Path'][0])
+        self.csv = pd.read_csv(self.df['CSV Path'][0])
         self.sample_rate = self.df['Sample Rate'][0]
         self.video_fps = self.df['Video FPS'][0]
         self.F1_name = self.df['F1 Name'][0]
@@ -320,6 +325,12 @@ class PhotometryVideoData:
             if re.match('405A|405C|465A|465C', column):
                 data[column] = self.df[self.df['Trial'] == trial][column].to_numpy()[self.trim_start:]
         return data
+    
+    ## Get the time series for a given trial, calculated from the sample rate and the length of the trial
+    # @param: trial - int containing the trial number
+    # @return: time - numpy array containing the time series for the trial
+    def get_time(self, trial):
+        return np.linspace(0, len(self.get_photometry_data(trial)['405A']) / self.sample_rate, len(self.get_photometry_data(trial)['405A']))
     
     ## Get all trials in a given CSV file as dict of arrays, where each array is all trials stacked
     # @return: data - dict containing the photometry data for each channel
@@ -353,6 +364,12 @@ class PhotometryVideoData:
             ret, frame = self.video.read()
             data.append(frame)
         return np.array(data)[self.trim_start*self.video_fps // self.sample_rate:]
+    
+    ## Returns a row of the experiment CSV for a given trial
+    # @param: trial - int containing the trial number
+    # @return: data - pandas series containing the row of the CSV file
+    def get_trial_data(self, trial):
+        return self.csv.iloc[trial]
 
 
 
