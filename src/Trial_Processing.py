@@ -128,8 +128,10 @@ def downsample(data, fs, target_fs):
 # @param: sample_rate - float containing the sample rate of the photometry data, by default 1017 (fs of the TDT system)
 # @param: trial_duration - int containing the length of the trial in seconds, by default 30, this should be how long the light was turned on for in the trial
 # @param: skip_trials - int containing the number of trials to skip at the beginning of the data, by default 1, this is to skip the first trial which is usually before the experiment starts
+# @param: threshold - float containing the threshold to detect the rising edges of the data, by default 10
+# @param: csv_start_date - a datetime object with the cuetime of the first trial, if given it's used to determine how many blocks of data to skip at the start, if it is used then skip_trials is ignored
 # @return: 405A, 405B, 465A, 465B - N x L numpy arrays containing the data from each channel, where N is the number of trials and L is the length of the trial
-def load_photometry_streams(path, sample_rate=None, trial_duration=30, skip_trials=1, threshold=10):
+def load_photometry_streams(path, sample_rate=None, trial_duration=30, skip_trials=1, threshold=10, csv_start_date=None):
     # Load the TDT data from the path (this may take a while)
     data = tdt.read_block(path)
 
@@ -141,6 +143,21 @@ def load_photometry_streams(path, sample_rate=None, trial_duration=30, skip_tria
     stream_405C = downsample(data.streams['_405C'].data, data.streams['_405C'].fs, sample_rate)
     stream_465A = downsample(data.streams['_465A'].data, data.streams['_465A'].fs, sample_rate)
     stream_465C = downsample(data.streams['_465C'].data, data.streams['_465C'].fs, sample_rate)
+    
+    # get the start time of the photometry recording, and then create an array of timestamps for each sample
+    photometry_start_date = data.info.start_date
+    if csv_start_date is not None:
+        offset_time = (csv_start_date - photometry_start_date).total_seconds()
+        offset_samples = int(offset_time * sample_rate)
+        print('Offsetting photometry data by ' + str(offset_samples) + ' samples')
+        print(len(stream_405A))
+        stream_405A = stream_405A[offset_samples:]
+        stream_405C = stream_405C[offset_samples:]
+        stream_465A = stream_465A[offset_samples:]
+        stream_465C = stream_465C[offset_samples:]
+        skip_trials = 1
+
+    timestamps = np.linspace(0, len(stream_405A) / sample_rate, len(stream_405A))
 
     # All streams must be the same length
     assert len(stream_405A) == len(stream_405C) == len(stream_465A) == len(stream_465C), "Error: Photometry streams are not the same length"
@@ -158,7 +175,8 @@ def load_photometry_streams(path, sample_rate=None, trial_duration=30, skip_tria
         trials_405C = ([ trial[:int(trial_duration*sample_rate)] for trial in np.split(stream_405C, start_indices)[skip_trials:-1]])
         trials_465A = ([ trial[:int(trial_duration*sample_rate)] for trial in np.split(stream_465A, start_indices)[skip_trials:-1]])
         trials_465C = ([ trial[:int(trial_duration*sample_rate)] for trial in np.split(stream_465C, start_indices)[skip_trials:-1]])
-        return trials_405A, trials_405C, trials_465A, trials_465C
+        trial_timestamps = ([ trial[:int(trial_duration*sample_rate)] for trial in np.split(timestamps, start_indices)[skip_trials:-1]])
+        return trials_405A, trials_405C, trials_465A, trials_465C, trial_timestamps
 
     except IndexError:
         print("Error: Photometry data at path: " + path + " is shorter than the given trial duration, either trial duration is too long or the threshold is incorrect")
@@ -177,12 +195,19 @@ def load_photometry_streams(path, sample_rate=None, trial_duration=30, skip_tria
 # @param: skip_trials - int containing the number of trials to skip at the beginning of the data, by default 1, this is to skip the first trial which is usually before the experiment starts
 # @param: sample_rate - float containing the sample rate of the photometry data, by default 1017 (fs of the TDT system)
 # @param: cue_offset_seconds - the signed offset between the cue and the trigger sent to the photmetry data in seconds, e.g. if the trigger was 5 seconds before the cue it would be -5
+# @param: use_time_alignment - bool, if true then the it will use the start datetimes of the CSV file and the video file to align the data, if false then it will use the skip trials parameter to align the data
 # @return - df - pandas dataframe containing the photometry data, with each trial labelled, as well as video timestamps for each entry
-def write_photometry_to_csv(CSV_path, Video_path, Photometry_path, output_path, F1_name, F2_name, trial_duration=30, skip_trials=1, sample_rate=None, cue_offset_seconds=0):
-    trials_405A, trials_405C, trials_465A, trials_465C = load_photometry_streams(Photometry_path, sample_rate=sample_rate, trial_duration=trial_duration, skip_trials=skip_trials)
+def write_photometry_to_csv(CSV_path, Video_path, Photometry_path, output_path, F1_name, F2_name, trial_duration=30, skip_trials=1, sample_rate=None, cue_offset_seconds=0, use_time_alignment=False):
+    experiment_csv = pd.read_csv(CSV_path)
+    if use_time_alignment:
+        experiment_start_date = parse_date(experiment_csv['cue_time in s'][0])
+    else:
+        experiment_start_date = None
+    
+    trials_405A, trials_405C, trials_465A, trials_465C, timestamps = load_photometry_streams(Photometry_path, sample_rate=sample_rate, trial_duration=trial_duration, skip_trials=skip_trials, csv_start_date=experiment_start_date)
     if sample_rate is None:
         sample_rate = 1017
-    experiment_csv = pd.read_csv(CSV_path)
+
     video = cv2.VideoCapture(Video_path)
     video_fps = video.get(cv2.CAP_PROP_FPS)
     video_start_time = parse_date(Video_path.split('/')[-1].split('_')[0])
@@ -192,23 +217,24 @@ def write_photometry_to_csv(CSV_path, Video_path, Photometry_path, output_path, 
     video_offset_frames = int(video_offset_seconds * video_fps)
     trial_length = int(trial_duration * sample_rate)
     data = []
+    print(len(timestamps))
     for i in range(len(cue_delta_time_seconds)):
-        try:
-            trial_405A = trials_405A[i]
-            trial_405C = trials_405C[i]
-            trial_465A = trials_465A[i]
-            trial_465C = trials_465C[i]
-            video_frames = np.linspace(video_offset_frames + int(cue_delta_time_seconds[i] * video_fps), video_offset_frames + int(cue_delta_time_seconds[i] * video_fps) + trial_length, trial_length)
-            # round to nearest frame
-            video_frames = np.round(video_frames)
-            for j in range(trial_length):
-                if i == 0 and j == 0:
-                    data.append({'Trial': i, '405A': trial_405A[j], '405C': trial_405C[j], '465A': trial_465A[j], '465C': trial_465C[j], 'Video Frame': video_frames[j], 'Sample Rate': sample_rate, 'Video FPS': video_fps, "Video Path": Video_path, 'Photometry Path': Photometry_path, 'CSV Path': CSV_path, 'F1 Name' : F1_name, 'F2 Name': F2_name})
-                else:
-                    data.append({'Trial': i, '405A': trial_405A[j], '405C': trial_405C[j], '465A': trial_465A[j], '465C': trial_465C[j], 'Video Frame': video_frames[j], 'Sample Rate': None, 'Video FPS': None, "Video Path": None, 'Photometry Path': None, 'CSV Path': None, 'F1 Name' : None, 'F2 Name': None})
-        except IndexError:
-            break
-    df = pd.DataFrame(data, columns=['Trial', '405A', '405C', '465A', '465C', 'Video Frame', 'Sample Rate', 'Video FPS', "Video Path", 'Photometry Path', 'CSV Path', 'F1 Name', 'F2 Name'])
+
+        trial_405A = trials_405A[i]
+        trial_405C = trials_405C[i]
+        trial_465A = trials_465A[i]
+        trial_465C = trials_465C[i]
+        trial_timestamps = timestamps[i]
+        video_frames = np.linspace(video_offset_frames + int(cue_delta_time_seconds[i] * video_fps), video_offset_frames + int(cue_delta_time_seconds[i] * video_fps) + trial_length, trial_length)
+        # round to nearest frame
+        video_frames = np.round(video_frames)
+        for j in range(trial_length):
+            if i == 0 and j == 0:
+                data.append({'Trial': i, '405A': trial_405A[j], '405C': trial_405C[j], '465A': trial_465A[j], '465C': trial_465C[j], 'Video Frame': video_frames[j], 'Timestamp': trial_timestamps[j], 'Sample Rate': sample_rate, 'Video FPS': video_fps, "Video Path": Video_path, 'Photometry Path': Photometry_path, 'CSV Path': CSV_path, 'F1 Name' : F1_name, 'F2 Name': F2_name})
+            else:
+                data.append({'Trial': i, '405A': trial_405A[j], '405C': trial_405C[j], '465A': trial_465A[j], '465C': trial_465C[j], 'Video Frame': video_frames[j], 'Timestamp': trial_timestamps[j], 'Sample Rate': None, 'Video FPS': None, "Video Path": None, 'Photometry Path': None, 'CSV Path': None, 'F1 Name' : None, 'F2 Name': None})
+
+    df = pd.DataFrame(data, columns=['Trial', '405A', '405C', '465A', '465C', 'Video Frame', 'Timestamp', 'Sample Rate', 'Video FPS', "Video Path", 'Photometry Path', 'CSV Path', 'F1 Name', 'F2 Name'])
     df.to_csv(output_path, index=False)
     return df
         
@@ -322,7 +348,7 @@ class PhotometryVideoData:
     def get_photometry_data(self, trial):
         data = dict()
         for column in self.df.columns:
-            if re.match('405A|405C|465A|465C', column):
+            if re.match('405A|405C|465A|465C|Timestamp', column):
                 data[column] = self.df[self.df['Trial'] == trial][column].to_numpy()[self.trim_start:]
         return data
     
@@ -351,6 +377,11 @@ class PhotometryVideoData:
     def set_trim_start(self, trim_start):
         self.trim_start = trim_start
     
+    ## Length of the experiment in # of trials
+    # @return: length - int containing the number of trials in the experiment
+    def __len__(self):
+        return len(self.df['Trial'].unique())
+
     ## Get the video data for a given trial, finding the range of frames in the video corresponding to the trial
     ## then loading the frames from the video
     # @param: trial - int containing the trial number
