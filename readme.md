@@ -25,7 +25,6 @@ Miniconda: dl link - https://docs.conda.io/projects/miniconda/en/latest/
 
 2. setup required python environment 
     - First create a new conda environment, make sure conda is installed then, run ```conda create --name myenv --file spec-file.txt``` myenv can be replaced with whatever you want your environment named.
-    - activate env with ```conda activate social_interaction``` then run ```conda install pip```
     - run ```pip install -r requirements.txt``` while in the project directory to install all required pacakges
 3. demo of how to use the code to load data should be in ```test_trials.ipynb```, which is setup to use the preprocessed 'littermate interaction' trials, if you wish to use data from a different set of trials change the ```teamshare``` variable in config.py to point to that set of data and then run ```process_data_script.py```, before running make sure to press ```ctrl-shift-p``` (command instaed of ctrl if on mac) and then find the option python: select interpreter and set it to be the social interaction 
 

@@ -394,7 +394,7 @@ class PhotometryVideoData:
             self.video.set(cv2.CAP_PROP_POS_FRAMES, i)
             ret, frame = self.video.read()
             data.append(frame)
-        return np.array(data)[self.trim_start*self.video_fps // self.sample_rate:]
+        return np.array(data)[int(self.trim_start*self.video_fps / self.sample_rate):]
     
     ## Returns a row of the experiment CSV for a given trial
     # @param: trial - int containing the trial number
