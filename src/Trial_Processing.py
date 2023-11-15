@@ -209,7 +209,8 @@ def write_photometry_to_csv(CSV_path, Video_path, Photometry_path, output_path, 
         sample_rate = 1017
 
     video = cv2.VideoCapture(Video_path)
-    video_fps = video.get(cv2.CAP_PROP_FPS)
+    ## Video fps hardcapped 30 as cv2 doesn't always return the correct fps
+    video_fps = 30
     video_start_time = parse_date(Video_path.split('/')[-1].split('_')[0])
     first_cue_onset = parse_date(experiment_csv['cue_time in s'][0])
     cue_delta_time_seconds = experiment_csv['cue_time in s'].apply(lambda x: (parse_date(x) - first_cue_onset).total_seconds())
@@ -395,6 +396,24 @@ class PhotometryVideoData:
             ret, frame = self.video.read()
             data.append(frame)
         return np.array(data)[int(self.trim_start*self.video_fps / self.sample_rate):]
+    
+    ## Load video data from a range of time around a specified timestamp
+    # @param: timestamp - float containing the timestamp to load the video data around
+    # @param: window - float containing the window of time to load the video data around the timestamp in seconds
+    # @return: data - numpy array containing the video frames for the specified time range
+    def load_video_data_around_timestamp(self, timestamp, window):
+        video_offset = self.df['Video Frame'][0]
+        start_time = timestamp - window/2
+        end_time = timestamp + window/2
+        start_frame = start_time * self.video_fps + video_offset
+        end_frame = end_time * self.video_fps + video_offset
+        data = []
+        for i in range(int(start_frame), int(end_frame)):
+            self.video.set(cv2.CAP_PROP_POS_FRAMES, i)
+            ret, frame = self.video.read()
+            data.append(frame)
+        return np.array(data)
+
     
     ## Returns a row of the experiment CSV for a given trial
     # @param: trial - int containing the trial number

@@ -11,6 +11,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Convert h264 video to avi')
     parser.add_argument('input_path', type=str, help='path to input h264 video')
     parser.add_argument('output_path', type=str, help='path to output avi video')
+    parser.add_argument('--start', type=int, default=0, help='start time in seconds')
+    parser.add_argument('--end', type=int, help='end time in seconds')
     args = parser.parse_args()
 
     # Load the h264 video
@@ -23,14 +25,20 @@ if __name__ == '__main__':
 
     # Define the codec and create VideoWriter object
     fourcc = cv2.VideoWriter_fourcc(*'XVID')
-    avi_video = cv2.VideoWriter(args.output_path, fourcc, 30, (width, height))
+    avi_video = cv2.VideoWriter(args.output_path, fourcc, fps, (width, height))
 
     total_frames = int(h264_video.get(cv2.CAP_PROP_FRAME_COUNT))
     with tqdm.tqdm(total=total_frames, unit="frame", unit_scale=True) as pbar:
         # Loop through the frames of the h264 video, convert each frame to avi, and write to output video
+        frame_count = 0
         while h264_video.isOpened():
             ret, frame = h264_video.read()
             if ret:
+                frame_count += 1
+                if frame_count < args.start * fps:
+                    continue
+                if args.end and frame_count > args.end * fps:
+                    break
                 avi_video.write(frame)
                 pbar.update(1)
             else:
@@ -39,3 +47,4 @@ if __name__ == '__main__':
     # Release everything
     h264_video.release()
     avi_video.release()
+
