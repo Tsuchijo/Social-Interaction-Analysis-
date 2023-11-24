@@ -22,14 +22,16 @@ if __name__ == '__main__':
         date = row[1]['Date'].strftime('%Y%m%d')
         output_path = date + '_' + names + '.csv'
         output_path = os.path.join(config.remote_processed_data_path, output_path)
-        output_reference_list.append(dict({
-            'date': date,
-            'names': names,
-            'path': output_path
-        
-        }))
+
         if photo_path is not None and csv_path is not None and video_path is not None:
+            print('Writing photometry data to CSV file: ' + output_path)
             pts.write_photometry_to_csv(csv_path, video_path, photo_path, output_path, row[1]['F1 Name'], row[1]['F2 Name'], sample_rate=30, cue_offset_seconds=0)
+            output_reference_list.append(dict({
+                'date': date,
+                'names': names,
+                'path': output_path
+            
+            }))
     # Write the output reference list to a CSV file
     output_df = pd.DataFrame(output_reference_list)
-    output_df.to_csv('output_reference_list.csv')
+    output_df.to_csv(os.path.join(config.remote_processed_data_path, 'output_reference_list.csv'))

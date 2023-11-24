@@ -9,6 +9,7 @@ import datetime
 import re
 import cv2
 import tdt
+from matplotlib.animation import FuncAnimation
 sys.path.append(os.path.abspath('../'))
 import config
 
@@ -217,8 +218,14 @@ def write_photometry_to_csv(CSV_path, Video_path, Photometry_path, output_path, 
     video_offset_seconds = (first_cue_onset - video_start_time).total_seconds() + cue_offset_seconds
     video_offset_frames = int(video_offset_seconds * video_fps)
     trial_length = int(trial_duration * sample_rate)
+    video_length = int(trial_duration * video_fps)
     data = []
     print(len(timestamps))
+    ## Cut off the first two directories of each path as they are the remote path
+    CSV_path = '/'.join(CSV_path.split('/')[-2:])
+    Video_path = '/'.join(Video_path.split('/')[-2:])
+    Photometry_path = '/'.join(Photometry_path.split('/')[-2:])
+
     for i in range(len(cue_delta_time_seconds)):
 
         trial_405A = trials_405A[i]
@@ -226,7 +233,7 @@ def write_photometry_to_csv(CSV_path, Video_path, Photometry_path, output_path, 
         trial_465A = trials_465A[i]
         trial_465C = trials_465C[i]
         trial_timestamps = timestamps[i]
-        video_frames = np.linspace(video_offset_frames + int(cue_delta_time_seconds[i] * video_fps), video_offset_frames + int(cue_delta_time_seconds[i] * video_fps) + trial_length, trial_length)
+        video_frames = np.linspace(video_offset_frames + int(cue_delta_time_seconds[i] * video_fps), video_offset_frames + int(cue_delta_time_seconds[i] * video_fps) + video_length, trial_length)
         # round to nearest frame
         video_frames = np.round(video_frames)
         for j in range(trial_length):
@@ -335,8 +342,10 @@ class PhotometryVideoData:
         if photo_csv_path is None and df is None:
             raise ValueError("Error: Must provide either a CSV path or a dataframe")
         self.df = pd.read_csv(photo_csv_path) if df is None else df
-        self.video = cv2.VideoCapture(self.df['Video Path'][0])
-        self.csv = pd.read_csv(self.df['CSV Path'][0])
+        self.video_path = os.path.join(config.remote_path, self.df['Video Path'][0])
+        self.csv_path = os.path.join(config.remote_path, self.df['CSV Path'][0])
+        self.video = cv2.VideoCapture(self.video_path)
+        self.csv = pd.read_csv(self.csv_path)
         self.sample_rate = self.df['Sample Rate'][0]
         self.video_fps = self.df['Video FPS'][0]
         self.F1_name = self.df['F1 Name'][0]
@@ -391,11 +400,18 @@ class PhotometryVideoData:
         start_frame = self.df[self.df['Trial'] == trial]['Video Frame'].min()
         end_frame = self.df[self.df['Trial'] == trial]['Video Frame'].max()
         data = []
+        self.video = cv2.VideoCapture(self.video_path)
+        for i in range(0, int(start_frame)):
+            self.video.read()
         for i in range(int(start_frame), int(end_frame)):
-            self.video.set(cv2.CAP_PROP_POS_FRAMES, i)
             ret, frame = self.video.read()
             data.append(frame)
         return np.array(data)[int(self.trim_start*self.video_fps / self.sample_rate):]
+    
+    ## get the video writer object for the video
+    # @return: video - cv2 VideoWriter object
+    def get_video_writer(self):
+        return self.video
     
     ## Load video data from a range of time around a specified timestamp
     # @param: timestamp - float containing the timestamp to load the video data around
@@ -413,6 +429,46 @@ class PhotometryVideoData:
             ret, frame = self.video.read()
             data.append(frame)
         return np.array(data)
+    
+    def plot_time_series_and_video(self, output_path, data, trial, sample_rate):
+        fig, (ax1, ax2) = plt.subplots(2, 1)
+        video = self.get_video_data(trial)
+        ax1.imshow(video[0])
+        for dataset in data:
+            timeseries = np.linspace(0, len(dataset) / sample_rate, len(dataset))
+            ax2.plot(timeseries, dataset)
+
+        line_max_bound = max([max(dataset) for dataset in data])
+        line_min_bound = min([min(dataset) for dataset in data])
+
+        def update(frame):
+            ax1.clear()
+            ax1.imshow(video[frame])
+            ax2.clear()
+            for dataset in data:
+                timeseries = np.linspace(0, len(dataset) / sample_rate, len(dataset))
+                ax2.plot(timeseries, dataset)
+            ax2.vlines(((frame * sample_rate) // 30), line_min_bound, line_max_bound, color='r')
+        
+        ani = FuncAnimation(fig, update, interval=1000/30, frames=len(video))
+        ani.save(output_path)
+        
+
+    
+    ## Given a set of data and a video of different rates create a animation displaying the video and the data being plotted using matplotlib on the same figure
+    def animate_trace(self, output_path, data, sample_rate, video, fps=30):
+        fig, (ax1, ax2) = plt.subplots(2, 1)
+        ax1.imshow(video[0])
+        ax2.plot(data)
+        ## animate a vertical line and the video
+        def animate(i):
+            ax1.clear()
+            ax1.imshow(video[i])
+            ax2.vline(i*sample_rate//fps)
+            ax2.set_xlim(0, len(data))
+        
+        ani = FuncAnimation(fig, animate, interval=1000/fps, frames=len(video))
+        ani.save(output_path)
 
     
     ## Returns a row of the experiment CSV for a given trial

@@ -7,8 +7,9 @@ import os
 PROJECT_ROOT = os.path.dirname(os.path.realpath(__file__))
 
 ## Remote paths
+remote_path = '/mnt/teams/'
 # Project root
-teamshare = '/mnt/teams/TM_Lab/Arjun Bhaskaran/Social interaction project/October Test Data/'
+teamshare = remote_path + 'TM_Lab/Arjun Bhaskaran/Social interaction project/October Test Data/'
 remote_trial_path = teamshare + 'csv files/'
 remote_video_path = teamshare + 'videos/'
 remote_photometry_path = teamshare + 'fiber photometry data/'
