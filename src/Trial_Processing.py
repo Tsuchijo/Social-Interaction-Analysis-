@@ -222,9 +222,9 @@ def write_photometry_to_csv(CSV_path, Video_path, Photometry_path, output_path, 
     data = []
     print(len(timestamps))
     ## Cut off the first two directories of each path as they are the remote path
-    CSV_path = '/'.join(CSV_path.split('/')[-2:])
-    Video_path = '/'.join(Video_path.split('/')[-2:])
-    Photometry_path = '/'.join(Photometry_path.split('/')[-2:])
+    CSV_path = '/'.join(CSV_path.split('/')[3:])
+    Video_path = '/'.join(Video_path.split('/')[3:])
+    Photometry_path = '/'.join(Photometry_path.split('/')[3:])
 
     for i in range(len(cue_delta_time_seconds)):
 
@@ -400,7 +400,7 @@ class PhotometryVideoData:
         start_frame = self.df[self.df['Trial'] == trial]['Video Frame'].min()
         end_frame = self.df[self.df['Trial'] == trial]['Video Frame'].max()
         data = []
-        self.video = cv2.VideoCapture(self.video_path)
+        self.video = cv2.VideoCapture(self.video_pathls)
         for i in range(0, int(start_frame)):
             self.video.read()
         for i in range(int(start_frame), int(end_frame)):
